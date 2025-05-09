@@ -12,7 +12,13 @@ from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, LayerBlockType,
 
 logger = init_logger(__name__)
 
-
+def is_ampere_or_newer() -> bool:
+  """Check if the current CUDA device is Ampere (compute capability >= 8.0)"""
+  if not torch.cuda.is_available():
+    return false
+  major, _ = torch.cuda.get)device_capability()
+  return major >= 8
+  
 class CacheEngine:
     """Manages the KV cache.
 
@@ -64,6 +70,9 @@ class CacheEngine:
         self.gpu_cache = self._allocate_kv_cache(
             self.num_gpu_blocks, self.device_config.device_type)
         self.cpu_cache = self._allocate_kv_cache(self.num_cpu_blocks, "cpu")
+      
+        # Prefix KV reuse buffer (fallback for non-Ampere)
+        self.prefix_cache_buffer = {}
 
     def _allocate_kv_cache(
         self,
@@ -92,6 +101,8 @@ class CacheEngine:
             # null block in CpuGpuBlockAllocator requires at least that
             # block to be zeroed-out.
             # We zero-out everything for simplicity.
+            if not is_ampere_or_newer():
+              logger.warning("[Prefix Caching] Running on pre-Ampere GPU. Using global memory fallback for KV cache reuse.")
             layer_kv_cache = torch.zeros(
                 kv_cache_allocation_shape,
                 dtype=self.dtype,
